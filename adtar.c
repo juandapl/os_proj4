@@ -11,11 +11,11 @@
 
 char result[1024];
 
-void RemovelastOccurenceDotSlash(const char* toSanitize){
+void specifyDirName(const char* toSanitize){
     int cutOff = 0;
-    for(int i = 0; i<strlen(toSanitize)-1; i++){
-        if(toSanitize[i] == '.' && toSanitize[i+1]=='/'){
-            cutOff = i+2;
+    for(int i = 0; i<strlen(toSanitize); i++){
+        if(toSanitize[i]=='/'){
+            cutOff = i+1;
         }
     }
     if(cutOff == 0){
@@ -26,7 +26,7 @@ void RemovelastOccurenceDotSlash(const char* toSanitize){
 }
 
 void printHierarchy(char* fname, char* curr_path){
-    RemovelastOccurenceDotSlash(fname);
+    specifyDirName(fname);
     DIR *dr = opendir(fname);
     if(dr == NULL){
         FILE* isFile = fopen(fname, "r");
