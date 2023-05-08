@@ -1,0 +1,8 @@
+open() function shall establish the connection between a file and a file descriptor. It shall create an open file description that refers to a file and a file descriptor that refers to that open file description. The file descriptor is used by other I/O functions to refer to that file. The path argument points to a pathname naming the file.
+
+The open() function shall return a file descriptor for the named file that is the lowest file descriptor not currently open for that process. The open file description is new, and therefore the file descriptor shall not share it with any other process in the system. The FD_CLOEXEC file descriptor flag associated with the new file descriptor shall be cleared.
+
+The file offset used to mark the current position within the file shall be set to the beginning of the file.
+
+The file status flags and file access modes of the open file description shall be set according to the value of oflag. 
+This is Kon Tsakalozos
