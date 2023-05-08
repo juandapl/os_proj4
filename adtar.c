@@ -1,3 +1,3 @@
-// adtar.c: abu dhabi tar
+// adtar.c: abu dhabi / alex delis tar
 // by Nicholas Raffone and Juan Piñeros
 
