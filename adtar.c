@@ -183,6 +183,63 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
     }
 }
 
+void createINodeArrayFromFile(char* fileName, INodeArray* arr){
+    FILE* zippedFile = fopen(fileName, "r");
+    unsigned long sizeToRead;
+    while(
+        fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
+    ){
+        char* metadata = (char*) malloc(sizeToRead);
+
+        fread(metadata, sizeToRead, 1, zippedFile);
+
+        if(strncmp(metadata, "CMD:", 4) == 0){
+            // command
+            char command[256];
+            sscanf(metadata, "CMD: %s\n", command);
+        }else{
+            // metadata
+            char type[256];
+            char name[256];
+            int owner_id;
+            int owner_gid;
+            char perm_str[256];
+            sscanf(
+                metadata,
+                "TYPE: %s\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %s\n",
+                type,
+                name,
+                &owner_id,
+                &owner_gid,
+                perm_str
+            );
+            int perm_int = strtol(perm_str, 0, 8);
+
+            if(strncmp(type, "FILE", 4) == 0){
+                insertINodeArrayElem(arr, 0, name);
+                // add to file
+                unsigned long fileSize;
+                fscanf(zippedFile, "%lu\n", &fileSize);
+                char* fileData = (char*) malloc(fileSize);
+                fread(fileData, fileSize, 1, zippedFile);
+                free(fileData);
+            }else if(strncmp(type, "DIRECTORY", 9) == 0){
+            }else if(strncmp(type, "LINK", 4) == 0){
+                int linkCmdSize;
+                fscanf(zippedFile, "%d\n", &linkCmdSize);
+
+                char linkToCommand[1024];
+                fread(linkToCommand, linkCmdSize, 1, zippedFile);
+                int linkTo;
+                sscanf(linkToCommand, "LINK TO: %d\n", &linkTo);
+            }
+        }
+        
+        free(metadata);
+    }
+    fclose(zippedFile);
+}
+
 void unpackFile(char* fileToUnpack){
     INodeArray* arr = createINodeArray();
     FILE* zippedFile = fopen(fileToUnpack, "r");
@@ -314,7 +371,6 @@ void printZipFileHierarchy(char* fileToUnpack){
     fclose(zippedFile);
 }
 
-
 void printZipFileMetadata(char* fileToUnpack){
     INodeArray* arr = createINodeArray();
     FILE* zippedFile = fopen(fileToUnpack, "r");
@@ -427,7 +483,10 @@ int main(int argc, char** argv){
             exit(1);
         }
         INodeArray* arr = createINodeArray();
+        createINodeArrayFromFile(argv[2], arr);
         FILE* toWrite = fopen(argv[2], "a"); // if w, is write mode, if a then its append mode
+        // recreate the inode array for links
+
         for(int i = 3; i<argc; i++){
             chdir(base_path);
             writeHierarchyToFile(toWrite, argv[i], arr);
