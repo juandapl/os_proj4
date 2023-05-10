@@ -9,6 +9,10 @@
 #include <sys/stat.h>
 #include <string.h>
 
+#define T_FILE 0
+#define T_LINK 1
+#define T_DIR 2
+
 typedef struct INodeArrayElem{
     unsigned long inodeval;
     char filepath[1024];
@@ -18,6 +22,30 @@ typedef struct INodeArray{
     INodeArrayElem** INodeList;
     int arrSize;
 } INodeArray;
+
+typedef struct MetadataField{
+    int type;
+    char name[256];
+    int owner_id;
+    int group_id;
+    char rights[10];
+    long size;
+} MetadataField;
+
+void get_metadata_field(MetadataField* field, int type, struct stat file_stat)
+{
+    field.type = type;
+    strcpy(field.name, result);
+    field.owner_id = file_stat.st_uid;
+    field.group_id = file_stat.st_gid,
+    sprintf(field.rights, "%o", file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO));
+
+    if(type == T_LINK)
+    {
+        field.size = sizeof(int); // read an int after this!
+    }
+}
+
 
 INodeArray* createINodeArray(){
     INodeArray* arr = (INodeArray*) malloc(sizeof(INodeArray));
@@ -74,7 +102,8 @@ void specifyDirName(const char* toSanitize){
 void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
     specifyDirName(fname);
     DIR *dr = opendir(fname);
-    if(dr == NULL){
+    if(dr == NULL) // is link or file
+    {
         FILE* isFile = fopen(fname, "r");
         if(isFile == NULL){
             printf("WRITE: file not valid: %s\n",fname);
@@ -84,80 +113,62 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
         lstat (fname, &file_stat);
         int linkTo = findINodeArrayElem(arr, file_stat.st_ino);
         if(linkTo > -1){
-            // its a link, denote as so
-            char metadata[256];
-            sprintf(
-                metadata,
-                "TYPE: LINK\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %o\n",
-                result,
-                file_stat.st_uid,
-                file_stat.st_gid,
-                file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO)
-            );
-            fprintf(toWrite, "%lu\n", strlen(metadata));
+            // its a link, denote as so, put all info in metadata struct
+            MetadataField field;
+            get_metadata_field(field, T_LINK, file_stat);
+            
 
-            //print metadata contents
-            fprintf(toWrite, "%s", metadata);
+            //print metadata contents to file
+            fwrite(field, sizeof(MetadataField), 1, toWrite);
+            //print inode number to file
+            fwrite(linkTo, sizeof(int), 1, toWrite);
 
-            char linkToStr[256];
-            sprintf(
-                linkToStr,
-                "LINK TO: %d\n",
-                linkTo
-            );
-            fprintf(toWrite, "%lu\n", strlen(linkToStr));
-            fprintf(toWrite, "%s", linkToStr);
             return;
         }
+
+        // if not link
         insertINodeArrayElem(arr, file_stat.st_ino, "");
         
         // get metadata
-        //https://stackoverflow.com/questions/14325706/how-to-get-octal-chmod-format-from-stat-in-c
+        // https://stackoverflow.com/questions/14325706/how-to-get-octal-chmod-format-from-stat-in-c
         char metadata[256];
-        sprintf(
-            metadata,
-            "TYPE: FILE\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %o\n",
-            result,
-            file_stat.st_uid,
-            file_stat.st_gid,
-            file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO)
-        );
 
-        // get metadata size
-        fprintf(toWrite, "%lu\n", strlen(metadata));
-
-        //print metadata contents
-        fprintf(toWrite, "%s", metadata);
-
-        // open file and get size
         int fileSize = file_stat.st_size;
 
-        // write filesize
-        fprintf(toWrite, "%d\n", fileSize);
+        MetadataField field;
+        field.type = T_FILE;
+        strcpy(field.name, result);
+        field.owner_id = file_stat.st_uid;
+        field.group_id = file_stat.st_gid,
+        sprintf(field.rights, "%o", file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO));
+        field.size = fileSize;
 
-        char* fileData = malloc(fileSize);
+        //print metadata contents to file
+        fwrite(field, sizeof(MetadataField), 1, toWrite);
 
+        void* fileData = malloc(fileSize);
+
+        // paste file data to adtar file
         fread(fileData, fileSize, 1, isFile);
-
-        fprintf(toWrite, "%s\n", fileData);
+        fwrite(fileData, fileSize, 1, toWrite);
 
         free(fileData);
 
         fclose(isFile);
-    }else{
+    }
+    else{ // is dir
 
         struct stat file_stat;
-        lstat (fname, &file_stat);
-        
-        char metadata[256];
-        sprintf(
-            metadata,
-            "TYPE: DIRECTORY\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %o\n",
-            result,
-            file_stat.st_uid,
-            file_stat.st_gid,
-            file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO)
-        );
+        lstat (fname, &file_stat); //TODO make this a function this is super messy
+        MetadataField field;
+        field.type = T_DIR;
+        strcpy(field.name, result);
+        field.owner_id = file_stat.st_uid;
+        field.group_id = file_stat.st_gid,
+        sprintf(field.rights, "%o", file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO));
+        field.size = 0;
+        fwrite(field, sizeof(MetadataField), 1, toWrite);
+
         fprintf(toWrite, "%lu\n", strlen(metadata));
 
         //print metadata contents
@@ -246,7 +257,8 @@ void unpackFile(char* fileToUnpack){
     unsigned long sizeToRead;
     while(
         fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
-    ){
+    )
+    {
         char* metadata = (char*) malloc(sizeToRead);
 
         fread(metadata, sizeToRead, 1, zippedFile);
@@ -258,7 +270,8 @@ void unpackFile(char* fileToUnpack){
             if(strncmp(command, "CLOSE", 5) == 0){
                 chdir("..");
             }
-        }else{
+        }
+        else{
             // metadata
             char type[256];
             char name[256];
@@ -464,7 +477,7 @@ int main(int argc, char** argv){
 
     if(strncmp(argv[1], "-c", 2) == 0){
         // store
-        if(argc < 3){
+        if(argc < 4){
             printf("Not enough arguments\n");
             exit(1);
         }
@@ -486,7 +499,6 @@ int main(int argc, char** argv){
         createINodeArrayFromFile(argv[2], arr);
         FILE* toWrite = fopen(argv[2], "a"); // if w, is write mode, if a then its append mode
         // recreate the inode array for links
-
         for(int i = 3; i<argc; i++){
             chdir(base_path);
             writeHierarchyToFile(toWrite, argv[i], arr);
