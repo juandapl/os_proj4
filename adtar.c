@@ -42,6 +42,7 @@ void get_metadata_field(MetadataField* field, int type, struct stat file_stat, c
     if(type == T_CLOSE)
     {
         field->size = 0;
+        strcpy(field->name, result);
         return;
     }
 
@@ -117,6 +118,20 @@ void specifyDirName(const char* toSanitize){
         return;
     }
     strncpy(result, toSanitize + cutOff, strlen(toSanitize));
+}
+
+void get_parent_dir(const char* toSanitize){
+    int cutOff = 0;
+    for(int i = 0; i<strlen(toSanitize); i++){
+        if(toSanitize[i]=='/'){
+            cutOff = i;
+        }
+    }
+    if(cutOff == 0){
+        strcpy(result, toSanitize);
+        return;
+    }
+    strncpy(result, toSanitize, cutOff);
 }
 
 void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
@@ -284,6 +299,130 @@ void unpackFile(char* fileToUnpack){
     destroyINodeArray(arr);
 }
 
+void unpack_specific(char* fileToUnpack, char* which)
+{
+    INodeArray* arr = createINodeArray();
+    FILE* zippedFile = fopen(fileToUnpack, "r");
+    MetadataField current_field;
+    unsigned long sizeToRead;
+    int found = 0;
+    char indir[256];
+    char internal_path[1024];
+    char temp[1024];
+    strcpy(internal_path, "");
+    while(
+        fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
+    )
+    {   // for each metadata field read:
+        // traverse. if found, unpack as normal. if not found, don't do anything
+        // for dirs, set found on dir entry, unset on same dir exit
+
+        if(current_field.type == T_CLOSE){ //if closedir
+            if(strcmp(internal_path, indir) == 0) // we exit the dir we were in / we stop extracting
+            {
+                chdir("..");
+                found --;
+            }
+
+            // remove last thing after the slash
+            // TODOOOO
+        }
+        else{
+            int perm_int = strtol(current_field.rights, 0, 8);
+
+            if(current_field.type == T_FILE){ 
+
+                char curr_dir[1024];
+                getcwd(curr_dir, sizeof(curr_dir));
+                strcat(curr_dir, "/");
+                strcat(curr_dir, current_field.name);
+                insertINodeArrayElem(arr, 0, curr_dir);
+
+                // set found
+                strcpy(temp, internal_path);
+                strcat(temp, "/");
+                strcat(temp, current_field.name);
+
+                if(strcmp(temp, which) == 0)
+                {
+                    found ++;
+                }
+                
+                // add to file (only if found)
+                if(found)
+                {
+                    FILE* newFile = fopen(current_field.name, "w");
+                    unsigned long fileSize = current_field.size;
+                    void* fileData = (void*) malloc(fileSize);
+                    fread(fileData, fileSize, 1, zippedFile);
+                    fwrite(fileData, 1, fileSize, newFile);
+                    free(fileData);
+                    fclose(newFile);
+                }
+
+                // unset found, return as command was issued for single file
+                if(strcmp(temp, which) == 0)
+                {
+                    found --;
+                    return;
+                }
+                
+            }
+            else if(current_field.type == T_DIR){
+                // change internal path
+                strcat(internal_path, current_field.name);
+
+                // set found
+                if(strcmp(internal_path, which) == 0)
+                {
+                    strcpy(indir, internal_path);
+                    found ++;
+                }
+
+                // only do if found
+                if(found)
+                {
+                    mkdir(current_field.name, perm_int);
+                    chdir(current_field.name);
+                }
+                
+            }
+            else if(current_field.type == T_LINK){
+                int link_n;
+                fread(&link_n, sizeof(int), 1, zippedFile);
+
+                // set found
+                strcpy(temp, internal_path);
+                strcat(temp, "/");
+                strcat(temp, current_field.name);
+
+                if(strcmp(temp, which) == 0)
+                {
+                    found ++;
+                }
+
+                
+                // if found 
+                if(found)
+                {
+                    link(arr->INodeList[link_n]->filepath, current_field.name);
+                }
+
+                // unset found, return as command was issued for single file
+                if(strcmp(temp, which) == 0)
+                {
+                    found --;
+                    return;
+                }
+
+
+            }
+        }
+    }
+    fclose(zippedFile);
+    destroyINodeArray(arr);
+}
+
 
 void printZipFileHierarchy(char* fileToUnpack){
     FILE* zippedFile = fopen(fileToUnpack, "r");
@@ -410,7 +549,7 @@ int main(int argc, char** argv){
         destroyINodeArray(arr);
     }else if(strncmp(argv[1], "-a", 2) == 0){
         // append
-         if(argc < 3){
+         if(argc < 4){
             printf("Not enough arguments\n");
             exit(1);
         }
@@ -426,30 +565,58 @@ int main(int argc, char** argv){
         fclose(toWrite);
 
     }else if(strncmp(argv[1], "-x", 2)==0){
-        // extract
-        FILE* isFile = fopen(argv[2], "r");
-        if(isFile == NULL){
-            printf("WRITE: file not valid: %s\n",fname);
-            return;
+        if(argc < 3){
+            printf("Not enough arguments\n");
+            exit(1);
         }
-        unpackFile(argv[2]);
+
+        if(argc == 3)
+        {
+            // extract all
+            FILE* isFile = fopen(argv[2], "r");
+            if(isFile == NULL){
+                printf("NOT FOUND: file not valid: %s\n",argv[2]);
+                return 1;
+            }
+            unpackFile(argv[2]);
+        }
+
+        if(argc > 3) //selectively unpack
+        {
+            for(int i = 3; i<argc; i++)
+            {
+                unpack_specific(argv[2], argv[i]);
+
+            }
+        }
+        
 
     }else if(strncmp(argv[1], "-m", 2)==0){
         // print metadata
+        if(argc < 3){
+            printf("Not enough arguments\n");
+            exit(1);
+        }
+
         FILE* isFile = fopen(argv[2], "r");
         if(isFile == NULL){
-            printf("WRITE: file not valid: %s\n",fname);
-            return;
+            printf("NOT FOUND: file not valid: %s\n",argv[2]);
+            return 1;
         }
 
         printZipFileMetadata(argv[2]);
 
     }else if(strncmp(argv[1], "-p", 2)==0){
+        if(argc < 3){
+            printf("Not enough arguments\n");
+            exit(1);
+        }
+
         // print file structure
         FILE* isFile = fopen(argv[2], "r");
         if(isFile == NULL){
-            printf("WRITE: file not valid: %s\n",fname);
-            return;
+            printf("NOT FOUND: file not valid: %s\n",argv[2]);
+            return 1;
         }
 
         printZipFileHierarchy(argv[2]);
