@@ -325,7 +325,8 @@ void unpack_specific(char* fileToUnpack, char* which)
             }
 
             // remove last thing after the slash
-            // TODOOOO
+            get_parent_dir(temp, internal_path);
+            strcpy(internal_path, temp);
         }
         else{
             int perm_int = strtol(current_field.rights, 0, 8);
