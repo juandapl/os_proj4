@@ -2,7 +2,7 @@
 // by Nicholas Raffone and Juan Piñeros
 
 // "No operating systems for you my friend"
-// - Prof Delis, to Cat
+// - Prof Delis, to Window Cat
 
 #include <stdio.h>
 #include <stdlib.h>
