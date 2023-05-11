@@ -120,18 +120,23 @@ void specifyDirName(const char* toSanitize){
     strncpy(result, toSanitize + cutOff, strlen(toSanitize));
 }
 
-void get_parent_dir(char* dest, const char* toSanitize){
+void get_parent_dir(char* toSanitize){
     int cutOff = 0;
+    char dest[1024];
+
     for(int i = 0; i<strlen(toSanitize); i++){
         if(toSanitize[i]=='/'){
             cutOff = i;
         }
     }
     if(cutOff == 0){
-        strcpy(dest, toSanitize);
+        strncpy(dest, toSanitize, 0);
+        strcpy(toSanitize, dest);
         return;
     }
+    memset(dest, 0, sizeof(dest));
     strncpy(dest, toSanitize, cutOff);
+    strcpy(toSanitize, dest);
 }
 
 void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
@@ -307,8 +312,10 @@ void unpack_specific(char* fileToUnpack, char* which)
     unsigned long sizeToRead;
     int found = 0;
     char indir[256];
+    strcpy(indir, "");
     char internal_path[1024];
     char temp[1024];
+    strcpy(temp, "");
     strcpy(internal_path, "");
     while(
         fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
@@ -316,17 +323,25 @@ void unpack_specific(char* fileToUnpack, char* which)
     {   // for each metadata field read:
         // traverse. if found, unpack as normal. if not found, don't do anything
         // for dirs, set found on dir entry, unset on same dir exit
-
+        strcpy(temp, "");
         if(current_field.type == T_CLOSE){ //if closedir
             if(strcmp(internal_path, indir) == 0) // we exit the dir we were in / we stop extracting
             {
                 chdir("..");
                 found --;
+                strcpy(internal_path, "");
+                fclose(zippedFile);
+                destroyINodeArray(arr);
+                return;
+            }
+
+            if(found)
+            {
+                chdir("..");
             }
 
             // remove last thing after the slash
-            get_parent_dir(temp, internal_path);
-            strcpy(internal_path, temp);
+            get_parent_dir(internal_path);
         }
         else{
             int perm_int = strtol(current_field.rights, 0, 8);
@@ -340,6 +355,7 @@ void unpack_specific(char* fileToUnpack, char* which)
                 insertINodeArrayElem(arr, 0, curr_dir);
 
                 // set found
+                strcpy(temp, "");
                 strcpy(temp, internal_path);
                 strcat(temp, "/");
                 strcat(temp, current_field.name);
@@ -349,28 +365,37 @@ void unpack_specific(char* fileToUnpack, char* which)
                     found ++;
                 }
                 
+                // advance pointer
+                
+                unsigned long fileSize = current_field.size;
+                void* fileData = (void*) malloc(fileSize);
+                fread(fileData, fileSize, 1, zippedFile);
+
                 // add to file (only if found)
                 if(found)
-                {
+                {     
                     FILE* newFile = fopen(current_field.name, "w");
-                    unsigned long fileSize = current_field.size;
-                    void* fileData = (void*) malloc(fileSize);
-                    fread(fileData, fileSize, 1, zippedFile);
                     fwrite(fileData, 1, fileSize, newFile);
-                    free(fileData);
                     fclose(newFile);
+                    
                 }
+                free(fileData);
+                
 
                 // unset found, return as command was issued for single file
                 if(strcmp(temp, which) == 0)
                 {
                     found --;
+                    fclose(zippedFile);
+                    destroyINodeArray(arr);
                     return;
                 }
+                strcpy(temp, "");
                 
             }
             else if(current_field.type == T_DIR){
                 // change internal path
+                strcat(internal_path, "/");
                 strcat(internal_path, current_field.name);
 
                 // set found
@@ -393,6 +418,7 @@ void unpack_specific(char* fileToUnpack, char* which)
                 fread(&link_n, sizeof(int), 1, zippedFile);
 
                 // set found
+                strcpy(temp, "");
                 strcpy(temp, internal_path);
                 strcat(temp, "/");
                 strcat(temp, current_field.name);
@@ -413,15 +439,16 @@ void unpack_specific(char* fileToUnpack, char* which)
                 if(strcmp(temp, which) == 0)
                 {
                     found --;
+                    fclose(zippedFile);
+                    destroyINodeArray(arr);
                     return;
                 }
-
-
             }
         }
     }
     fclose(zippedFile);
     destroyINodeArray(arr);
+    printf("File/dir %s not found.", which);
 }
 
 
