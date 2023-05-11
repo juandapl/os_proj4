@@ -120,7 +120,7 @@ void specifyDirName(const char* toSanitize){
     strncpy(result, toSanitize + cutOff, strlen(toSanitize));
 }
 
-void get_parent_dir(const char* toSanitize){
+void get_parent_dir(char* dest, const char* toSanitize){
     int cutOff = 0;
     for(int i = 0; i<strlen(toSanitize); i++){
         if(toSanitize[i]=='/'){
@@ -128,10 +128,10 @@ void get_parent_dir(const char* toSanitize){
         }
     }
     if(cutOff == 0){
-        strcpy(result, toSanitize);
+        strcpy(dest, toSanitize);
         return;
     }
-    strncpy(result, toSanitize, cutOff);
+    strncpy(dest, toSanitize, cutOff);
 }
 
 void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
