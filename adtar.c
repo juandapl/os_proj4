@@ -1,6 +1,9 @@
 // adtar.c: abu dhabi / alex delis tar
 // by Nicholas Raffone and Juan Piñeros
 
+// "No operating systems for you my friend"
+// - Prof Delis, to Cat
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -12,6 +15,7 @@
 #define T_FILE 0
 #define T_LINK 1
 #define T_DIR 2
+#define T_CLOSE 3
 
 typedef struct INodeArrayElem{
     unsigned long inodeval;
@@ -35,6 +39,13 @@ typedef struct MetadataField{
 void get_metadata_field(MetadataField* field, int type, struct stat file_stat)
 {
     field.type = type;
+    if(type == T_CLOSE)
+    {
+        field.size = 0;
+        return;
+    }
+
+
     strcpy(field.name, result);
     field.owner_id = file_stat.st_uid;
     field.group_id = file_stat.st_gid,
@@ -43,6 +54,15 @@ void get_metadata_field(MetadataField* field, int type, struct stat file_stat)
     if(type == T_LINK)
     {
         field.size = sizeof(int); // read an int after this!
+    }
+    else if(type == T_FILE)
+    {
+        int fileSize = file_stat.st_size;
+        field.size = fileSize;
+    }
+    else if(type == T_DIR)
+    {
+        field.size = 0;
     }
 }
 
@@ -117,7 +137,6 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
             MetadataField field;
             get_metadata_field(field, T_LINK, file_stat);
             
-
             //print metadata contents to file
             fwrite(field, sizeof(MetadataField), 1, toWrite);
             //print inode number to file
@@ -126,7 +145,7 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
             return;
         }
 
-        // if not link
+        // if file
         insertINodeArrayElem(arr, file_stat.st_ino, "");
         
         // get metadata
@@ -136,18 +155,12 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
         int fileSize = file_stat.st_size;
 
         MetadataField field;
-        field.type = T_FILE;
-        strcpy(field.name, result);
-        field.owner_id = file_stat.st_uid;
-        field.group_id = file_stat.st_gid,
-        sprintf(field.rights, "%o", file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO));
-        field.size = fileSize;
+        get_metadata_field(field, T_FILE, file_stat);
 
         //print metadata contents to file
         fwrite(field, sizeof(MetadataField), 1, toWrite);
 
         void* fileData = malloc(fileSize);
-
         // paste file data to adtar file
         fread(fileData, fileSize, 1, isFile);
         fwrite(fileData, fileSize, 1, toWrite);
@@ -159,20 +172,13 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
     else{ // is dir
 
         struct stat file_stat;
-        lstat (fname, &file_stat); //TODO make this a function this is super messy
+        lstat (fname, &file_stat);
+
         MetadataField field;
-        field.type = T_DIR;
-        strcpy(field.name, result);
-        field.owner_id = file_stat.st_uid;
-        field.group_id = file_stat.st_gid,
-        sprintf(field.rights, "%o", file_stat.st_mode&(S_IRWXU | S_IRWXG | S_IRWXO));
-        field.size = 0;
+        get_metadata_field(field, T_DIR, file_stat);
+
+        //print metadata contents to file
         fwrite(field, sizeof(MetadataField), 1, toWrite);
-
-        fprintf(toWrite, "%lu\n", strlen(metadata));
-
-        //print metadata contents
-        fprintf(toWrite, "%s", metadata);
 
         // traversal process
         chdir(fname);
@@ -186,240 +192,151 @@ void writeHierarchyToFile(FILE* toWrite, char* fname, INodeArray* arr){
         }
         closedir(dr);
 
-        char* closeCommand = "CMD: CLOSE\n";
-        fprintf(toWrite, "%lu\n", strlen(closeCommand));
+        MetadataField close_field;
+        get_metadata_field(close_field, T_CLOSE, file_stat);
 
-        fprintf(toWrite, "%s", closeCommand);
+        fwrite(close_field, sizeof(MetadataField), 1, toWrite);
+
         chdir("..");
     }
 }
 
+
 void createINodeArrayFromFile(char* fileName, INodeArray* arr){
     FILE* zippedFile = fopen(fileName, "r");
     unsigned long sizeToRead;
+    MetadataField current_field;
     while(
-        fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
-    ){
-        char* metadata = (char*) malloc(sizeToRead);
+        fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
+    ){ // for each metadata field read:
 
-        fread(metadata, sizeToRead, 1, zippedFile);
-
-        if(strncmp(metadata, "CMD:", 4) == 0){
-            // command
-            char command[256];
-            sscanf(metadata, "CMD: %s\n", command);
-        }else{
-            // metadata
-            char type[256];
-            char name[256];
-            int owner_id;
-            int owner_gid;
-            char perm_str[256];
-            sscanf(
-                metadata,
-                "TYPE: %s\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %s\n",
-                type,
-                name,
-                &owner_id,
-                &owner_gid,
-                perm_str
-            );
-            int perm_int = strtol(perm_str, 0, 8);
-
-            if(strncmp(type, "FILE", 4) == 0){
-                insertINodeArrayElem(arr, 0, name);
-                // add to file
-                unsigned long fileSize;
-                fscanf(zippedFile, "%lu\n", &fileSize);
-                char* fileData = (char*) malloc(fileSize);
-                fread(fileData, fileSize, 1, zippedFile);
-                free(fileData);
-            }else if(strncmp(type, "DIRECTORY", 9) == 0){
-            }else if(strncmp(type, "LINK", 4) == 0){
-                int linkCmdSize;
-                fscanf(zippedFile, "%d\n", &linkCmdSize);
-
-                char linkToCommand[1024];
-                fread(linkToCommand, linkCmdSize, 1, zippedFile);
-                int linkTo;
-                sscanf(linkToCommand, "LINK TO: %d\n", &linkTo);
-            }
+        if(current_field.type == T_CLOSE){ //if closedir, ignore
+            // do nothing
         }
-        
-        free(metadata);
+        int perm_int = strtol(current_field.rights, 0, 8);
+
+        if(current_field.type == T_FILE)
+        {
+            insertINodeArrayElem(arr, 0, current_field.name);
+            unsigned long fileSize = current_field.size;
+            void* fileData = malloc(fileSize);
+            fread(fileData, fileSize, 1, zippedFile);
+            free(fileData);
+        }
+        else if(current_field.type == T_DIR){
+            // do more nothing
+        }
+        else if(current_field.type == T_LINK){
+            int link_n;
+            fread(&link_n, sizeof(int), 1, zippedFile);
+        }
     }
     fclose(zippedFile);
 }
+    
 
 void unpackFile(char* fileToUnpack){
     INodeArray* arr = createINodeArray();
     FILE* zippedFile = fopen(fileToUnpack, "r");
+    MetadataField current_field;
     unsigned long sizeToRead;
     while(
-        fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
+        fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
     )
-    {
-        char* metadata = (char*) malloc(sizeToRead);
+    {   // for each metadata field read:
 
-        fread(metadata, sizeToRead, 1, zippedFile);
-
-        if(strncmp(metadata, "CMD:", 4) == 0){
-            // command
-            char command[256];
-            sscanf(metadata, "CMD: %s\n", command);
-            if(strncmp(command, "CLOSE", 5) == 0){
-                chdir("..");
-            }
+        if(current_field.type == T_CLOSE){ //if closedir
+            chdir("..");
         }
         else{
-            // metadata
-            char type[256];
-            char name[256];
-            int owner_id;
-            int owner_gid;
-            char perm_str[256];
-            sscanf(
-                metadata,
-                "TYPE: %s\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %s\n",
-                type,
-                name,
-                &owner_id,
-                &owner_gid,
-                perm_str
-            );
-            int perm_int = strtol(perm_str, 0, 8);
 
-            if(strncmp(type, "FILE", 4) == 0){
+            int perm_int = strtol(current_field.rights, 0, 8);
+
+            if(current_field.type == T_FILE){ 
+
                 char curr_dir[1024];
                 getcwd(curr_dir, sizeof(curr_dir));
                 strcat(curr_dir, "/");
-                strcat(curr_dir, name);
+                strcat(curr_dir, current_field.name);
                 insertINodeArrayElem(arr, 0, curr_dir);
+
                 // add to file
-                FILE* newFile = fopen(name, "w");
-                unsigned long fileSize;
-                fscanf(zippedFile, "%lu\n", &fileSize);
-                char* fileData = (char*) malloc(fileSize);
+                FILE* newFile = fopen(current_field.name, "w");
+                unsigned long fileSize = current_field.size;
+                void* fileData = (void*) malloc(fileSize);
                 fread(fileData, fileSize, 1, zippedFile);
                 fwrite(fileData, 1, fileSize, newFile);
                 free(fileData);
                 fclose(newFile);
-            }else if(strncmp(type, "DIRECTORY", 9) == 0){
-                mkdir(name, perm_int);
-                chdir(name);
-            }else if(strncmp(type, "LINK", 4) == 0){
-                int linkCmdSize;
-                fscanf(zippedFile, "%d\n", &linkCmdSize);
-
-                char linkToCommand[1024];
-                fread(linkToCommand, linkCmdSize, 1, zippedFile);
-                int linkTo;
-                sscanf(linkToCommand, "LINK TO: %d\n", &linkTo);
-                link(arr->INodeList[linkTo]->filepath, name);
+            }
+            else if(current_field.type == T_DIR){
+                mkdir(current_field.name, perm_int);
+                chdir(current_field.name);
+            }
+            else if(current_field.type == T_LINK){
+                int link_n;
+                fread(&link_n, sizeof(int), 1, zippedFile);
+                link(arr->INodeList[link_n]->filepath, name);
             }
         }
-        
-        free(metadata);
     }
     fclose(zippedFile);
     destroyINodeArray(arr);
 }
 
+
 void printZipFileHierarchy(char* fileToUnpack){
     FILE* zippedFile = fopen(fileToUnpack, "r");
     unsigned long sizeToRead;
+    MetadataField current_field;
     int spacing = 0;
     while(
-        fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
+        fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
     ){
-        char* metadata = (char*) malloc(sizeToRead);
-
-        fread(metadata, sizeToRead, 1, zippedFile);
-
-        if(strncmp(metadata, "CMD:", 4) == 0){
-            // command
-            char command[256];
-            sscanf(metadata, "CMD: %s\n", command);
-            if(strncmp(command, "CLOSE", 5) == 0){
-                spacing -= 4;
-            }
-        }else{
-            // metadata
-            char type[256];
-            char name[256];
-            int owner_id;
-            int owner_gid;
-            char perm_str[256];
-            sscanf(
-                metadata,
-                "TYPE: %s\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %s\n",
-                type,
-                name,
-                &owner_id,
-                &owner_gid,
-                perm_str
-            );
-            int perm_int = strtol(perm_str, 0, 8);
-            if(strncmp(type, "FILE", 4) == 0){
-                unsigned long fileSize;
-                fscanf(zippedFile, "%lu\n", &fileSize);
-                char* fileData = (char*) malloc(fileSize);
+        if(current_field.type == T_CLOSE){ // if close dir
+            spacing -= 4;
+        }
+        else{
+            int perm_int = strtol(current_field.rights, 0, 8);
+            if(current_field.type == T_FILE || current_field.type == T_LINK){
+                unsigned long fileSize = current_field.size;
+                void* fileData = malloc(fileSize);
                 fread(fileData, fileSize, 1, zippedFile);
                 free(fileData);
+
                 for(int i = 0; i<spacing; i++){
                     printf(" ");
                 }
-                printf("%s\n", name);
-            }else if(strncmp(type, "DIRECTORY", 9) == 0){
+                printf("%s\n", current_field.name);
+            }
+            else if(current_field.type == T_DIR){
                 for(int i = 0; i<spacing; i++){
                     printf(" ");
                 }
-                printf("%s/\n", name);
+                printf("%s/\n", current_field.name);
                 spacing += 4;
             }
         }
-        
-        free(metadata);
     }
     fclose(zippedFile);
 }
+
+// corrected until here
 
 void printZipFileMetadata(char* fileToUnpack){
     INodeArray* arr = createINodeArray();
     FILE* zippedFile = fopen(fileToUnpack, "r");
     unsigned long sizeToRead;
     int spacing = 0;
+    MetadataField current_field;
     while(
-        fscanf(zippedFile, "%lu\n", &sizeToRead) == 1
+        fread(&current_field, sizeof(MetadataField), 1, zippedFile) == 1
     ){
-        char* metadata = (char*) malloc(sizeToRead);
-
-        fread(metadata, sizeToRead, 1, zippedFile);
-
-        if(strncmp(metadata, "CMD:", 4) == 0){
-            // command
-            char command[256];
-            sscanf(metadata, "CMD: %s\n", command);
-            if(strncmp(command, "CLOSE", 5) == 0){
-                spacing -= 4;
-            }
-        }else{
-            // metadata
-            char type[256];
-            char name[256];
-            int owner_id;
-            int owner_gid;
-            char perm_str[256];
-            sscanf(
-                metadata,
-                "TYPE: %s\nNAME: %s\nOWNER ID: %d\nOWNER GROUP ID: %d\nRIGHTS: %s\n",
-                type,
-                name,
-                &owner_id,
-                &owner_gid,
-                perm_str
-            );
-            if(strncmp(type, "FILE", 4) == 0){
+        if(current_field.type == T_CLOSE){ // if closedir
+            spacing -= 4;
+        }
+        else{
+            if(current_field.type == T_FILE){
                 unsigned long fileSize;
                 fscanf(zippedFile, "%lu\n", &fileSize);
                 char* fileData = (char*) malloc(fileSize);
@@ -430,13 +347,15 @@ void printZipFileMetadata(char* fileToUnpack){
                 }
                 printf("%s (owner: %d gid: %d perms: %s)\n", name, owner_id, owner_gid, perm_str);
                 insertINodeArrayElem(arr, 0, name);
-            }else if(strncmp(type, "DIRECTORY", 9) == 0){
+            }
+            else if(current_field.type == T_DIR){
                 for(int i = 0; i<spacing; i++){
                     printf(" ");
                 }
                 printf("%s/ (owner: %d gid: %d perms: %s)\n", name, owner_id, owner_gid, perm_str);
                 spacing += 4;
-            }else if(strncmp(type, "LINK", 4) == 0){
+            }
+            else if(current_field.type == T_LINK){
                 int linkCmdSize;
                 fscanf(zippedFile, "%d\n", &linkCmdSize);
 
